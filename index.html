@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MVP Chat to n8n</title>
+<style>
+  :root { --bg:#0b0f14; --panel:#121821; --accent:#3b82f6; --text:#e8eef7; --muted:#96a2b4; }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--text);
+    font: 15px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+    display:flex; min-height:100dvh; align-items:center; justify-content:center;
+  }
+  .chat {
+    width:min(820px, 100vw); height: min(86dvh, 820px);
+    display:flex; flex-direction:column; gap:12px; padding:16px;
+  }
+  .header {
+    display:flex; align-items:center; gap:10px; padding:10px 14px; background:var(--panel);
+    border-radius:14px; box-shadow: 0 6px 18px rgba(0,0,0,.25);
+  }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--accent); box-shadow:0 0 16px var(--accent); }
+  .header h1 { margin:0; font-size:16px; font-weight:600; letter-spacing:.2px; }
+  .messages {
+    flex:1; overflow:auto; padding:14px; background:var(--panel);
+    border-radius:14px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
+  }
+  .msg { display:flex; gap:10px; margin:10px 0; max-width: 82ch; }
+  .msg.user { justify-content:flex-end; }
+  .bubble {
+    padding:10px 12px; border-radius:12px; white-space:pre-wrap; word-wrap:break-word;
+    box-shadow: 0 4px 12px rgba(0,0,0,.22);
+  }
+  .user .bubble { background:#1f2a3a; }
+  .bot .bubble  { background:#16202c; }
+  .meta { font-size:12px; color:var(--muted); margin-top:2px; }
+  .composer {
+    display:flex; gap:10px; background:var(--panel); padding:10px; border-radius:14px;
+    align-items:flex-end; box-shadow: 0 6px 18px rgba(0,0,0,.25);
+  }
+  textarea {
+    flex:1; resize:none; max-height:36dvh; min-height:44px; border:0; outline:0;
+    color:var(--text); background:transparent; padding:10px; border-radius:10px;
+  }
+  button {
+    background:var(--accent); color:white; border:0; padding:10px 14px; border-radius:10px;
+    font-weight:600; cursor:pointer;
+  }
+  button:disabled { opacity:.6; cursor:default; }
+  .hint { color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+  <main class="chat">
+    <div class="header">
+      <div class="dot" aria-hidden="true"></div>
+      <h1>Company Docs Chat</h1>
+    </div>
+
+    <div id="messages" class="messages" aria-live="polite"></div>
+
+    <div class="composer">
+      <textarea id="input" placeholder="Ask anything about your docs… (Shift+Enter = newline)"></textarea>
+      <button id="send">Send</button>
+    </div>
+    <div class="hint">No login. Messages go directly to your n8n webhook.</div>
+  </main>
+
+<script>
+  // ======== CONFIG: paste your n8n Webhook Production URL here ========
+  const WEBHOOK_URL = "https://ai.alpino-ai.com/webhook/2428af7b-00bc-4bf1-8355-0f3b8fdd4494"; // <-- change me
+  // ====================================================================
+
+  // Generate or reuse a simple session id so your n8n flow can keep context.
+  const sessionKey = "chat_session_id";
+  let sessionId = localStorage.getItem(sessionKey);
+  if (!sessionId) {
+    sessionId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2);
+    localStorage.setItem(sessionKey, sessionId);
+  }
+
+  const messagesEl = document.getElementById("messages");
+  const inputEl = document.getElementById("input");
+  const sendBtn = document.getElementById("send");
+
+  // Keep a lightweight client history (optional to send to n8n).
+  const history = [];
+
+  function addMessage(role, text) {
+    const wrapper = document.createElement("div");
+    wrapper.className = `msg ${role}`;
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+    wrapper.appendChild(bubble);
+    messagesEl.appendChild(wrapper);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function addMeta(text) {
+    const m = document.createElement("div");
+    m.className = "meta";
+    m.textContent = text;
+    messagesEl.appendChild(m);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  async function sendMessage() {
+    const text = inputEl.value.trim();
+    if (!text) return;
+
+    // UI: show user's message
+    addMessage("user", text);
+    inputEl.value = "";
+    inputEl.style.height = "44px";
+    sendBtn.disabled = true;
+
+    // Add a transient "bot is typing…" placeholder
+    const placeholder = document.createElement("div");
+    placeholder.className = "msg bot";
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = "…";
+    placeholder.appendChild(bubble);
+    messagesEl.appendChild(placeholder);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+
+    // Track in local history (optional)
+    history.push({ role: "user", content: text });
+
+    try {
+      const resp = await fetch(WEBHOOK_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // Send message + session id; include short history if you want
+        body: JSON.stringify({
+          message: text,
+          session_id: sessionId,
+          // For brevity, send last 6 turns; adjust to your needs or remove if n8n tracks context.
+          history: history.slice(-6)
+        }),
+      });
+
+      // CORS note: Ensure n8n returns Access-Control-Allow-Origin: * from the HTTP Response node.
+
+      let answerText = "";
+      const contentType = resp.headers.get("content-type") || "";
+      if (!resp.ok) {
+        answerText = `Error ${resp.status}: ${await resp.text().catch(() => "Request failed")}`;
+      } else if (contentType.includes("application/json")) {
+        const data = await resp.json();
+        // Support multiple possible shapes
+        answerText = data.answer || data.output || data.reply || JSON.stringify(data);
+      } else {
+        // Fallback to text/plain or other
+        answerText = await resp.text();
+      }
+
+      // Replace placeholder with actual bot answer
+      bubble.textContent = answerText || "(empty response)";
+      history.push({ role: "assistant", content: answerText });
+
+    } catch (err) {
+      bubble.textContent = `Network error: ${err && err.message ? err.message : err}`;
+    } finally {
+      sendBtn.disabled = false;
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+  }
+
+  // Autosize textarea
+  inputEl.addEventListener("input", () => {
+    inputEl.style.height = "auto";
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 500) + "px";
+  });
+
+  // Keyboard behavior: Enter = send, Shift+Enter = newline
+  inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  sendBtn.addEventListener("click", sendMessage);
+
+  // Optional: greeting
+  addMessage("bot", "Hi! Ask me anything about your documents.");
+</script>
+</body>
+</html>
