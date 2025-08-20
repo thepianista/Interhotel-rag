@@ -1,0 +1,26 @@
+{
+  "name": "interhotel-rag",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thepianista/Interhotel-rag.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/thepianista/Interhotel-rag/issues"
+  },
+  "homepage": "https://github.com/thepianista/Interhotel-rag#readme",
+  "description": "",
+  "devDependencies": {
+    "vite": "^7.1.3"
+  }
+}
